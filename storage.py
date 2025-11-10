@@ -4,7 +4,8 @@ DATA_FILE = "data.json"
 
 def load_data():
     if not os.path.exists(DATA_FILE):
-        return {"faculties": {}, "students": {}}
+        # add classes key now
+        return {"faculties": {}, "students": {}, "classes": {}}
     with open(DATA_FILE, "r") as f:
         return json.load(f)
 
