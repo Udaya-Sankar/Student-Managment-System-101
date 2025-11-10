@@ -1,13 +1,18 @@
-name: Python CI - Warning Check
+name: Python CI - Auto Merge After Approval
 
 on:
-  pull_request:
-    types: [closed]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
-  check-warnings:
-    if: github.event.pull_request.merged == true
+  check-and-merge:
+    # Run only if review is approved
+    if: github.event.review.state == 'approved'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -19,8 +24,16 @@ jobs:
 
       - name: Run interpreter warning test
         run: |
-          echo "Scanning for interpreter warnings..."
+          echo "🔍 Running Python syntax & warning checks after PR approval..."
           for f in $(find . -name "*.py"); do
-            echo "Checking $f"
+            echo "➡️ Checking $f"
             python -W error -m py_compile "$f"
           done
+          echo "✅ All Python files passed successfully!"
+
+      - name: Auto-merge PR after successful check
+        run: |
+          echo "🚀 All checks passed and PR approved. Proceeding to auto-merge..."
+          gh pr merge ${{ github.event.pull_request.number }} --merge --auto
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
