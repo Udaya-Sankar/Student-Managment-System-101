@@ -1,0 +1,26 @@
+name: Python CI - Warning Check
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  check-warnings:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run interpreter warning test
+        run: |
+          echo "Scanning for interpreter warnings..."
+          for f in $(find . -name "*.py"); do
+            echo "Checking $f"
+            python -W error -m py_compile "$f"
+          done
