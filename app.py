@@ -1,133 +1,337 @@
+# app.py
+# Version 3 GUI: classes, subjects, marks, ranks, popup details.
+
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from storage import load_data, save_data
-import random, string
+from utils import generate_student_id, generate_temp_password, compute_totals_and_ranks
 from datetime import datetime
 
-# -------- utility helpers ----------
-def gen_pwd(n=8):
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=n))
-
-def gen_id(roll):
-    return f"STU_{roll}_{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
-
-# -------- GUI application ----------
+# ---------------- App ----------------
 class SMSApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Student Management System - Version 2 (Classes)")
-        self.geometry("550x350")
+        self.title("Student Management System - v3 (GUI: Marks & Ranks)")
+        self.geometry("900x600")
+        self.minsize(800, 500)
         self.data = load_data()
-        self.role = tk.StringVar(value="faculty")
-        self.build_login()
+        self.current_user = None
+        self.current_role = None  # "faculty" or "student"
+        self._build_login()
 
-    # ---------- login screen ----------
-    def build_login(self):
+    # ---------- Login Screen ----------
+    def _build_login(self):
         for w in self.winfo_children():
             w.destroy()
-        ttk.Label(self, text="Login", font=("Helvetica", 16)).pack(pady=10)
-        frm_role = ttk.Frame(self); frm_role.pack()
-        ttk.Radiobutton(frm_role, text="Faculty", variable=self.role, value="faculty").grid(row=0, column=0)
-        ttk.Radiobutton(frm_role, text="Student", variable=self.role, value="student").grid(row=0, column=1)
+        frame = ttk.Frame(self, padding=20)
+        frame.pack(expand=True, fill=tk.BOTH)
 
-        self.u = tk.StringVar(); self.p = tk.StringVar()
-        ttk.Label(self, text="Username:").pack(pady=(10,0))
-        ttk.Entry(self, textvariable=self.u).pack()
-        ttk.Label(self, text="Password:").pack()
-        ttk.Entry(self, textvariable=self.p, show="*").pack()
-        ttk.Button(self, text="Login", command=self.handle_login).pack(pady=5)
-        ttk.Button(self, text="Register Faculty", command=self.register_faculty).pack()
+        ttk.Label(frame, text="Student Management System (v3)", font=("Helvetica", 18)).pack(pady=8)
 
-    # ---------- faculty registration ----------
-    def register_faculty(self):
-        uname = simpledialog.askstring("Register Faculty", "Enter username:", parent=self)
-        if not uname: return
+        role_frame = ttk.Frame(frame)
+        role_frame.pack(pady=6)
+        self.role_var = tk.StringVar(value="faculty")
+        ttk.Radiobutton(role_frame, text="Faculty", variable=self.role_var, value="faculty").grid(row=0, column=0, padx=6)
+        ttk.Radiobutton(role_frame, text="Student", variable=self.role_var, value="student").grid(row=0, column=1, padx=6)
+
+        login_frame = ttk.Frame(frame)
+        login_frame.pack(pady=12)
+        ttk.Label(login_frame, text="Username / Student ID:").grid(row=0, column=0, sticky=tk.E, padx=6, pady=4)
+        self.ent_user = ttk.Entry(login_frame, width=30)
+        self.ent_user.grid(row=0, column=1, padx=6, pady=4)
+        ttk.Label(login_frame, text="Password:").grid(row=1, column=0, sticky=tk.E, padx=6, pady=4)
+        self.ent_pass = ttk.Entry(login_frame, width=30, show="*")
+        self.ent_pass.grid(row=1, column=1, padx=6, pady=4)
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=8)
+        ttk.Button(btn_frame, text="Login", command=self._handle_login).grid(row=0, column=0, padx=8)
+        ttk.Button(btn_frame, text="Register Faculty", command=self._register_faculty).grid(row=0, column=1, padx=8)
+        ttk.Button(btn_frame, text="Quit", command=self.destroy).grid(row=0, column=2, padx=8)
+
+    def _register_faculty(self):
+        uname = simpledialog.askstring("Register Faculty", "Faculty username:", parent=self)
+        if not uname:
+            return
         if uname in self.data["faculties"]:
-            return messagebox.showerror("Error", "Username already exists.")
-        name = simpledialog.askstring("Register Faculty", "Full name:", parent=self)
-        pwd = simpledialog.askstring("Register Faculty", "Password:", parent=self, show="*")
+            messagebox.showerror("Error", "Faculty username already exists.")
+            return
+        name = simpledialog.askstring("Full name:", "Full name:", parent=self)
+        pwd = simpledialog.askstring("Password:", "Password:", parent=self, show="*")
+        if not name or not pwd:
+            return
         self.data["faculties"][uname] = {"name": name, "password": pwd}
         save_data(self.data)
-        messagebox.showinfo("Success", "Faculty registered successfully.")
+        messagebox.showinfo("OK", "Faculty registered.")
 
-    # ---------- login logic ----------
-    def handle_login(self):
-        role = self.role.get()
-        uname, pwd = self.u.get().strip(), self.p.get().strip()
+    def _handle_login(self):
+        uname = self.ent_user.get().strip()
+        pwd = self.ent_pass.get().strip()
+        role = self.role_var.get()
         if role == "faculty":
-            user = self.data["faculties"].get(uname)
-            if not user or user["password"] != pwd:
-                return messagebox.showerror("Login Failed", "Invalid faculty credentials.")
-            self.faculty_home(uname)
+            faculty = self.data["faculties"].get(uname)
+            if not faculty or faculty.get("password") != pwd:
+                messagebox.showerror("Login failed", "Invalid faculty credentials")
+                return
+            self.current_user = uname
+            self.current_role = "faculty"
+            self._build_faculty_dashboard()
         else:
-            stu = self.data["students"].get(uname)
-            if not stu or stu["password"] != pwd:
-                return messagebox.showerror("Login Failed", "Invalid student credentials.")
-            if stu.get("first_login", True):
+            student = self.data["students"].get(uname)
+            if not student or student.get("password") != pwd:
+                messagebox.showerror("Login failed", "Invalid student credentials")
+                return
+            # first-login check
+            if student.get("first_login", True):
                 new_pwd = simpledialog.askstring("First Login", "Set new password:", parent=self, show="*")
-                if not new_pwd: return
-                stu["password"] = new_pwd
-                stu["first_login"] = False
+                if not new_pwd:
+                    messagebox.showwarning("Cancelled", "You must change password on first login.")
+                    return
+                student["password"] = new_pwd
+                student["first_login"] = False
                 save_data(self.data)
                 messagebox.showinfo("Updated", "Password changed successfully.")
-            self.student_home(uname)
+            self.current_user = uname
+            self.current_role = "student"
+            self._build_student_view()
 
-    # ---------- faculty dashboard ----------
-    def faculty_home(self, uname):
+    # ---------- Faculty Dashboard ----------
+    def _build_faculty_dashboard(self):
         for w in self.winfo_children():
             w.destroy()
-        ttk.Label(self, text=f"Welcome {self.data['faculties'][uname]['name']}", font=("Helvetica", 14)).pack(pady=10)
-        ttk.Button(self, text="Create Class", command=lambda:self.create_class(uname)).pack(pady=3)
-        ttk.Button(self, text="Register Student to Class", command=lambda:self.register_student_to_class(uname)).pack(pady=3)
-        ttk.Button(self, text="Logout", command=self.build_login).pack(pady=10)
+        top = ttk.Frame(self, padding=8)
+        top.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(top, text=f"Faculty: {self.data['faculties'][self.current_user]['name']}", font=("Helvetica", 14)).pack(side=tk.LEFT)
+        ttk.Button(top, text="Logout", command=self._logout).pack(side=tk.RIGHT)
 
-    # ---------- create a new class ----------
-    def create_class(self, faculty_uname):
-        cname = simpledialog.askstring("Create Class", "Enter class name (e.g., 10A):", parent=self)
-        if not cname: return
+        main = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        main.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # left: operations
+        left = ttk.Frame(main, width=260, padding=8)
+        main.add(left, weight=1)
+        ttk.Button(left, text="Create Class", command=self._create_class).pack(fill=tk.X, pady=4)
+        ttk.Button(left, text="Add Subject to Class", command=self._add_subject_to_class).pack(fill=tk.X, pady=4)
+        ttk.Button(left, text="Register Student to Class", command=self._register_student_to_class).pack(fill=tk.X, pady=4)
+        ttk.Button(left, text="Add/Update Marks", command=self._add_update_marks).pack(fill=tk.X, pady=4)
+        ttk.Button(left, text="Refresh Rank List", command=self._refresh_rank_list).pack(fill=tk.X, pady=4)
+
+        # right: class selector and rank list
+        right = ttk.Frame(main, padding=8)
+        main.add(right, weight=3)
+        ttk.Label(right, text="Select Class:").pack(anchor=tk.W)
+        self.class_combo = ttk.Combobox(right, state="readonly")
+        self.class_combo.pack(fill=tk.X, pady=4)
+        self.class_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_rank_list())
+        ttk.Label(right, text="Rank List:").pack(anchor=tk.W, pady=(8, 0))
+        self.rank_listbox = tk.Listbox(right, activestyle="none")
+        self.rank_listbox.pack(fill=tk.BOTH, expand=True)
+        self.rank_listbox.bind("<Double-Button-1>", lambda e: self._open_selected_student_popup())
+
+        self._populate_class_combo()
+
+    def _logout(self):
+        self.current_user = None
+        self.current_role = None
+        self._build_login()
+
+    def _populate_class_combo(self):
+        faculty = self.current_user
+        classes = [(cid, c["name"]) for cid, c in self.data["classes"].items() if c.get("faculty") == faculty]
+        self.fac_classes = classes
+        vals = [f"{name} ({cid})" for cid, name in classes]
+        self.class_combo["values"] = vals
+        if vals:
+            self.class_combo.current(0)
+            self._refresh_rank_list()
+        else:
+            self.rank_listbox.delete(0, tk.END)
+
+    def _create_class(self):
+        cname = simpledialog.askstring("Create Class", "Class name (e.g., 10A):", parent=self)
+        if not cname:
+            return
         cid = f"class_{int(datetime.now().timestamp())}"
-        self.data["classes"][cid] = {"name": cname, "faculty": faculty_uname, "students": [], "subjects": []}
+        self.data["classes"][cid] = {"name": cname, "faculty": self.current_user, "students": [], "subjects": []}
         save_data(self.data)
-        messagebox.showinfo("Success", f"Class '{cname}' created.")
+        messagebox.showinfo("Created", f"Class '{cname}' created.")
+        self._populate_class_combo()
 
-    # ---------- register a student to class ----------
-    def register_student_to_class(self, faculty_uname):
-        # list faculty classes
-        owned = [(cid, c) for cid, c in self.data["classes"].items() if c["faculty"] == faculty_uname]
-        if not owned:
-            return messagebox.showerror("Error", "No classes found. Create one first.")
-        # choose class
-        classes_str = "\n".join([f"{i+1}. {c['name']}" for i,(cid,c) in enumerate(owned)])
-        idx = simpledialog.askinteger("Select Class", f"Choose class:\n{classes_str}", parent=self, minvalue=1, maxvalue=len(owned))
-        if not idx: return
-        cid = owned[idx-1][0]
-        roll = simpledialog.askstring("Register Student", "Enter Roll No:", parent=self)
-        name = simpledialog.askstring("Register Student", "Full Name:", parent=self)
-        if not roll or not name: return
-        sid = gen_id(roll)
-        pwd = gen_pwd()
+    def _choose_class_for_faculty(self):
+        if not getattr(self, "fac_classes", None):
+            messagebox.showerror("No classes", "Create a class first.")
+            return None
+        idx = self.class_combo.current()
+        if idx < 0:
+            messagebox.showerror("Choose class", "Select a class from dropdown.")
+            return None
+        return self.fac_classes[idx][0]
+
+    def _add_subject_to_class(self):
+        cid = self._choose_class_for_faculty()
+        if not cid:
+            return
+        sub = simpledialog.askstring("Add Subject", "Subject name:", parent=self)
+        if not sub:
+            return
+        if sub in self.data["classes"][cid]["subjects"]:
+            messagebox.showwarning("Exists", "Subject already exists in class.")
+            return
+        self.data["classes"][cid]["subjects"].append(sub)
+        save_data(self.data)
+        messagebox.showinfo("Added", f"Subject '{sub}' added to class.")
+
+    def _register_student_to_class(self):
+        cid = self._choose_class_for_faculty()
+        if not cid:
+            return
+        roll = simpledialog.askstring("Student Roll", "Enter roll number:", parent=self)
+        name = simpledialog.askstring("Student Name", "Full name:", parent=self)
+        if not roll or not name:
+            return
+        sid = generate_student_id(roll)
+        pwd = generate_temp_password()
         self.data["students"][sid] = {
             "name": name,
             "password": pwd,
             "first_login": True,
-            "class_id": cid
+            "class_id": cid,
+            "marks": {}
         }
         self.data["classes"][cid]["students"].append(sid)
         save_data(self.data)
-        messagebox.showinfo("Student Added", f"Student '{name}' registered.\nID: {sid}\nTemp Password: {pwd}")
+        messagebox.showinfo("Student Created", f"ID: {sid}\nTemp Password: {pwd}")
+        self._refresh_rank_list()
 
-    # ---------- student dashboard ----------
-    def student_home(self, sid):
+    def _add_update_marks(self):
+        cid = self._choose_class_for_faculty()
+        if not cid:
+            return
+        cls = self.data["classes"][cid]
+        if not cls.get("subjects"):
+            messagebox.showerror("No subjects", "Add subjects to class first.")
+            return
+        students = cls.get("students", [])
+        if not students:
+            messagebox.showerror("No students", "Register students first.")
+            return
+        # choose student
+        choices = [f"{self.data['students'][s]['name']} ({s})" for s in students]
+        idx = simpledialog.askinteger("Choose Student", "Enter number:\n" + "\n".join(f"{i+1}. {c}" for i, c in enumerate(choices)),
+                                      parent=self, minvalue=1, maxvalue=len(choices))
+        if not idx:
+            return
+        sid = students[idx - 1]
+        # open small dialog to enter marks for each subject
+        marks_win = tk.Toplevel(self)
+        marks_win.title(f"Marks for {self.data['students'][sid]['name']} ({sid})")
+        entries = {}
+        for r, sub in enumerate(cls["subjects"]):
+            ttk.Label(marks_win, text=sub).grid(row=r, column=0, padx=8, pady=6, sticky=tk.E)
+            ent = ttk.Entry(marks_win, width=10)
+            ent.grid(row=r, column=1, padx=8, pady=6)
+            cur_val = str(self.data["students"][sid].get("marks", {}).get(sub, ""))
+            ent.insert(0, cur_val)
+            entries[sub] = ent
+
+        def save_marks():
+            try:
+                for sub, ent in entries.items():
+                    text = ent.get().strip()
+                    if text == "":
+                        # keep existing (or 0)
+                        continue
+                    val = int(text)
+                    if "marks" not in self.data["students"][sid]:
+                        self.data["students"][sid]["marks"] = {}
+                    self.data["students"][sid]["marks"][sub] = val
+                save_data(self.data)
+                messagebox.showinfo("Saved", "Marks saved successfully.")
+                marks_win.destroy()
+                self._refresh_rank_list()
+            except ValueError:
+                messagebox.showerror("Invalid", "Please enter integer marks only.")
+
+        ttk.Button(marks_win, text="Save", command=save_marks).grid(row=len(cls["subjects"]), column=0, columnspan=2, pady=10)
+
+    def _refresh_rank_list(self):
+        cid = self._choose_class_for_faculty()
+        if not cid:
+            return
+        ranks = compute_totals_and_ranks(self.data, cid)
+        arr = sorted([(info["rank"], sid, info["total"]) for sid, info in ranks.items()], key=lambda x: x[0])
+        self.rank_listbox.delete(0, tk.END)
+        for rank, sid, total in arr:
+            name = self.data["students"].get(sid, {}).get("name", "Unknown")
+            self.rank_listbox.insert(tk.END, f"Rank {rank} - {name} ({sid}) - Total {total}")
+
+    def _open_selected_student_popup(self):
+        sel = self.rank_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        text = self.rank_listbox.get(idx)
+        # extract student id in parentheses
+        import re
+        m = re.search(r'\(([^)]+)\)', text)
+        if not m:
+            return
+        sid = m.group(1)
+        self._open_student_popup(sid)
+
+    def _open_student_popup(self, sid):
+        student = self.data["students"].get(sid)
+        if not student:
+            return
+        cid = student.get("class_id")
+        if not cid:
+            subjects = []
+        else:
+            subjects = self.data["classes"][cid].get("subjects", [])
+        ranks = compute_totals_and_ranks(self.data, cid) if cid else {}
+        popup = tk.Toplevel(self)
+        popup.title(f"{student['name']} - Details")
+        popup.geometry("360x300")
+        ttk.Label(popup, text=f"{student['name']} ({sid})", font=("Helvetica", 12)).pack(pady=6)
+        body = ttk.Frame(popup, padding=6)
+        body.pack(fill=tk.BOTH, expand=True)
+        for sub in subjects:
+            val = student.get("marks", {}).get(sub, 0)
+            ttk.Label(body, text=f"{sub}: {val}").pack(anchor=tk.W, padx=8, pady=2)
+        total = ranks.get(sid, {}).get("total", 0)
+        rank = ranks.get(sid, {}).get("rank", "-")
+        ttk.Label(popup, text=f"Total: {total}    Rank: {rank}", font=("Helvetica", 11)).pack(pady=8)
+        ttk.Button(popup, text="Close", command=popup.destroy).pack(pady=6)
+
+    # ---------- Student View ----------
+    def _build_student_view(self):
         for w in self.winfo_children():
             w.destroy()
-        s = self.data["students"][sid]
-        class_name = "Not assigned"
-        if s.get("class_id"):
-            class_name = self.data["classes"][s["class_id"]]["name"]
-        ttk.Label(self, text=f"Welcome {s['name']}", font=("Helvetica", 14)).pack(pady=5)
-        ttk.Label(self, text=f"Class: {class_name}", font=("Helvetica", 12)).pack(pady=5)
-        ttk.Button(self, text="Logout", command=self.build_login).pack(pady=10)
+        top = ttk.Frame(self, padding=8)
+        top.pack(side=tk.TOP, fill=tk.X)
+        student = self.data["students"][self.current_user]
+        ttk.Label(top, text=f"Student: {student['name']}", font=("Helvetica", 14)).pack(side=tk.LEFT)
+        ttk.Button(top, text="Logout", command=self._logout).pack(side=tk.RIGHT)
 
+        main = ttk.Frame(self, padding=12)
+        main.pack(fill=tk.BOTH, expand=True)
+        cid = student.get("class_id")
+        if not cid:
+            ttk.Label(main, text="You are not assigned to any class.").pack()
+            return
+        cls = self.data["classes"][cid]
+        ttk.Label(main, text=f"Class: {cls['name']}", font=("Helvetica", 12)).pack(anchor=tk.W)
+        ttk.Label(main, text="Your Marks:", font=("Helvetica", 12)).pack(anchor=tk.W, pady=(8, 0))
+        for sub in cls.get("subjects", []):
+            val = student.get("marks", {}).get(sub, 0)
+            ttk.Label(main, text=f"{sub}: {val}").pack(anchor=tk.W, padx=8)
+        ranks = compute_totals_and_ranks(self.data, cid)
+        total = ranks.get(self.current_user, {}).get("total", 0)
+        rank = ranks.get(self.current_user, {}).get("rank", "-")
+        ttk.Label(main, text=f"Total: {total}    Rank: {rank}", font=("Helvetica", 12)).pack(pady=12)
+
+
+# ---------------- Run ----------------
 if __name__ == "__main__":
     app = SMSApp()
     app.mainloop()
